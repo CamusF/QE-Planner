@@ -1,0 +1,1732 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>资格考排程表</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js" crossorigin></script>
+<style>
+  html,body{margin:0;height:100%;background:#F2F3EF}
+  #root{height:100%}
+  #boot{padding:40px;font:14px/1.6 system-ui,"PingFang SC",sans-serif;color:#767C72}
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">正在载入…<br><small>首次打开需要联网取 React；之后可离线使用。</small></div></div>
+<script type="text/babel" data-presets="react">
+/* ====================================================================
+   资格考排程表
+   字体 / 字号 / 粗细 / 字距 全部集中在下面 CSS 里的 .qe{} 变量区，
+   搜索「文本格式总控」即可跳到那一段，改变量就够了，不必翻正文。
+   ==================================================================== */
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+/* ------------------------------------------------------------------ */
+const pad = (n) => String(n).padStart(2, "0");
+const toKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fromKey = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; };
+const startOfWeek = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+const daysBetween = (a, b) => Math.round((fromKey(b) - fromKey(a)) / 86400000);
+const dow = (k) => fromKey(k).getDay();
+const MONTHS = ["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
+const WD = ["一","二","三","四","五","六","日"];
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+const tint = (hex, a) => {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+const surname = (p) => {
+  const t = p.trim().split(/\s+/);
+  return t.length > 1 ? t[t.length - 1] : p;
+};
+
+const NEUTRAL = "#6E746B";
+
+const PALETTE = ["#C2255C", "#1C7ED6", "#E8590C", "#0CA678",
+                 "#7048E8", "#F59F00", "#37B24D", "#0C8599"];
+
+const r = (groupId, author, title) => ({ id: uid(), groupId, author, title, note: "", date: null, done: false });
+
+const SEED_LISTS = [
+  { id: "A", name: "Systems Thinking in China", examiner: "Jing Tsu", color: "#C2255C", sections: [
+      { id: "A1", name: "Systems Fever", groups: [
+        { id: "A1g1", name: "Futures" },
+        { id: "A1g2", name: "Scientific Methodology" },
+        { id: "A1g3", name: "Information and Computation" },
+      ] },
+      { id: "A2", name: "Development I", groups: [
+        { id: "A2g1", name: "Birth of the developmental state" },
+        { id: "A2g2", name: "Socialist development" },
+      ] },
+    ] },
+  { id: "B", name: "Socialist 80s", examiner: "Jinyi Chu", color: "#1C7ED6", sections: [
+      { id: "B1", name: "Socialist 80s", groups: [
+        { id: "B1g1", name: "Economic Reforms" },
+        { id: "B1g2", name: "Cultural Turn" },
+        { id: "B1g3", name: "Soviet Comparison" },
+      ] },
+      { id: "B2", name: "Development II", groups: [
+        { id: "B2g1", name: "Developmental time: from evolution to Marxism" },
+        { id: "B2g2", name: "Is development the hard truth? A World-System Analysis" },
+      ] },
+    ] },
+  { id: "C", name: "Capitalism by Design", examiner: "David Sadighian", color: "#E8590C", sections: [
+      { id: "C1", name: "Capitalism", groups: [
+        { id: "C1g1", name: "Capital, Crises, and Fixes" },
+        { id: "C1g2", name: "South" },
+        { id: "C1g3", name: "Ecology" },
+        { id: "C1g4", name: "Labor, Machine, and Management" },
+        { id: "C1g5", name: "The China Question" },
+      ] },
+      { id: "C2", name: "Topics in Architectural History", groups: [
+        { id: "C2g1", name: "Organization" },
+        { id: "C2g2", name: "Development" },
+        { id: "C2g3", name: "Infrastructure" },
+        { id: "C2g4", name: "Infrastructure: East Asian context" },
+        { id: "C2g5", name: "Chinese Architecture, Urbanism, and Ruralism" },
+      ] },
+    ] },
+  { id: "D", name: "The Difficult Whole: History of Systems Thinking", examiner: "Deborah Coen", color: "#0CA678", sections: [
+      { id: "D1", name: "Machine and Life (1700-1940s)", groups: [
+        { id: "D1g1", name: "The Organic Machine" },
+        { id: "D1g2", name: "The Birth of Energy" },
+        { id: "D1g3", name: "Life and Holism" },
+      ] },
+      { id: "D2", name: "Cybernetics (1940s-1980s)", groups: [
+        { id: "D2g1", name: "American Cybernetics" },
+        { id: "D2g2", name: "Cold War Rationality: Futurology, Data, and Operations Research" },
+        { id: "D2g3", name: "Alternative Pasts and Futures in the West" },
+        { id: "D2g4", name: "Socialist Practices" },
+      ] },
+      { id: "D3", name: "Complexity and Neoliberalism (1980s-2010s)", groups: [
+        { id: "D3g1", name: "Complexity and Neoliberalism" },
+      ] },
+      { id: "D4", name: "The Whole Earth (1960s-)", groups: [
+        { id: "D4g1", name: "Ecological Thinking" },
+        { id: "D4g2", name: "Science and Politics at the Planetary Scale" },
+      ] },
+    ] },
+];
+
+const SEED_READINGS = [
+  r("A1g1", "", "经济控制论"),
+  r("A1g1", "", "增长的极限"),
+  r("A1g1", "", "没有极限的增长"),
+  r("A1g1", "", "整体的哲学: 组织的起源、生长和演化"),
+  r("A1g1", "", "在历史的表象背后: 对中国封建社会超稳定结构的探索"),
+  r("A1g1", "托夫勒", "第三次浪潮"),
+  r("A1g1", "普利高津、斯唐热", "从混沌到有序: 人与自然的新对话"),
+  r("A1g1", "Julian Gewirtz", "The Futurists of Beijing: Alvin Toffler, Zhao Ziyang, and China's New Technological Revolution, 1979–1991"),
+  r("A1g1", "Ying Qian", "Rise of the Brain: Envisioning Human Potential in 1980s China"),
+  r("A1g2", "钱学森等", "论系统工程"),
+  r("A1g2", "钱学森等", "系统理论中的科学方法与哲学问题: 1982年北京系统论、信息论、控制论中的科学方法与哲学问题学术讨论会文集"),
+  r("A1g2", "魏宏森", "系统论科学方法论导论"),
+  r("A1g2", "金观涛、华国凡", "控制论与科学方法论"),
+  r("A1g2", "Susan Greenhalgh", "Missile Science, Population Science: The Origins of China's One-Child Policy"),
+  r("A1g3", "王洪喆", "漫長的電子革命：計算機与紅色中國的技術政治1955 – 1984"),
+  r("A1g3", "Xiao Liu", "Information Fantasies: Precarious Mediation in Postsocialist China"),
+  r("A1g3", "David A. Palmer", "Qigong Fever: Body, Science, and Utopia in China"),
+  r("A1g3", "Benjamin H. Bratton, Anna Greenspan, and Bogna Konior eds.", "Machine Decision is Not Final: China and the History and Future of Artificial Intelligence"),
+  r("A1g3", "Angela Xiao Wu", "Journalism via Systems Cybernetics: The Birth of the Chinese Communication Discipline and Post-Mao Press Reforms"),
+  r("A2g1", "William C. Kirby", "Engineering China: Birth of the Developmental State, 1928-1937"),
+  r("A2g1", "Victor Seow", "Carbon Technocracy: Energy Regimes in Modern East Asia"),
+  r("A2g1", "Victor Seow", "Psychology as technology: industrial psychology for an industrializing China"),
+  r("A2g1", "Kate Merkel-Hess", "The Rural Modern: Reconstructing the Self and State in Republican China"),
+  r("A2g1", "Uluğ Kuzuoğlu", "Codes of Modernity: Chinese Scripts in the Global Information Age"),
+  r("A2g2", "Maurice Meisner", "Marxism, Maoism, and Utopianism: Eight Essays"),
+  r("A2g2", "Koji Hirata", "Making Mao's Steelworks: Industrial Manchuria and the Transnational Origins of Chinese Socialism"),
+  r("A2g2", "Ying Qian", "When Taylorism Met Revolutionary Romanticism: Documentary Cinema in China's Great Leap Forward"),
+  r("A2g2", "Arunabh Ghosh", "Making It Count: Statistics and Statecraft in the Early People's Republic of China"),
+  r("A2g2", "Jiří Hudeček", "Hua Loo-Keng's Popularization of Mathematics and the Cultural Revolution"),
+  r("A2g2", "Joel Andreas", "Rise of the Red Engineers: The Cultural Revolution and the Origins of China's New Class"),
+  r("A2g2", "Sigrid Schmalzer", "Red Revolution, Green Revolution: Scientific Farming in Socialist China"),
+  r("B1g1", "温铁军", "八次危机: 中国的真实经验 1949-2009"),
+  r("B1g1", "柳红", "八〇年代：中国经济学人的光荣与梦想"),
+  r("B1g1", "Julian Gewirtz", "Unlikely Partners: Chinese Reformers, Western Economists, and the Making of Global China"),
+  r("B1g1", "Isabella M. Weber", "How China Escaped Shock Therapy: The Market Reform Debate"),
+  r("B1g1", "Sebastian Heilmann and Elizabeth J. Perry eds.", "Mao's Invisible Hand: The Political Foundations of Adaptive Governance in China"),
+  r("B1g1", "Joel Andreas", "Disenfranchised: The Rise and Fall of Industrial Citizenship in China"),
+  r("B1g2", "Xudong Zhang", "Chinese Modernism in the Era of Reforms: Cultural Fever, Avant-Garde Fiction, and the New Chinese Cinema"),
+  r("B1g2", "Xudong Zhang", "Postsocialism and Cultural Politics, China in the Last Decade of the Twentieth Century"),
+  r("B1g2", "贺桂梅", "\"新启蒙\"知识档案: 80年代中国文化研究"),
+  r("B1g2", "许纪霖、罗岗", "启蒙的自我瓦解: 1990年代以来中国思想文化界重大论争研究"),
+  r("B1g2", "阿里夫·德里克", "后革命氛围"),
+  r("B1g2", "汪晖", "去政治化的政治: 短20世纪的终结与90年代"),
+  r("B1g3", "Alexei Yurchak", "Everything Was Forever, Until It Was No More: The Last Soviet Generation"),
+  r("B1g3", "Yakov Feygin", "Building a Ruin: The Cold War Politics of Soviet Economic Reform"),
+  r("B1g3", "Benjamin Peters", "How Not to Network a Nation: The Uneasy History of the Soviet Internet"),
+  r("B1g3", "Eglė Rindzevičiūtė", "The Will to Predict: Orchestrating the Future through Science"),
+  r("B2g1", "Xiaoxing Jin", "The Evolution of Social Darwinism in China, 1895–1930"),
+  r("B2g1", "Andrew F. Jones", "Developmental Fairy Tales: Evolutionary Thinking and Modern Chinese Culture"),
+  r("B2g1", "汪晖", "现代中国思想的兴起: 下卷，第一部 公理与反公理"),
+  r("B2g1", "Marco Fumian", "Fendou: A Keyword of Chinese Modernity"),
+  r("B2g1", "Maurice Meisner", "Li Ta-Chao and the Chinese Communist Treatment of the Materialist Conception of History"),
+  r("B2g1", "Arif Dirlik", "Mirror to Revolution: Early Marxist Images of Chinese History"),
+  r("B2g2", "许宝强、汪晖编", "发展的幻象"),
+  r("B2g2", "Arif Dirlik", "Globalization and National Development: The Perspective of the Chinese Revolution"),
+  r("B2g2", "Rebecca E. Karl", "The Magic of Concepts: History and the Economic in Twentieth-Century China"),
+  r("C1g1", "Karl Marx", "Wage Labour and Capital"),
+  r("C1g1", "Karl Marx", "Capital, Volume 1 ([1867] 1992), ch. 25 The General Law of Capitalist Accumulation (sec. 1-4); ch. 26 The Secret of Primitive Accumulation"),
+  r("C1g1", "Karl Marx", "Capital, Volume 3 ([1894] 1992), Part Three The Law of the Tendential Fall in the Rate of Profit: ch. 13 The Law Itself; ch. 14 Counteracting Factors; ch. 15 Development of the Law's Internal Contradictions"),
+  r("C1g1", "Jonathan Levy", "Capital as Process and the History of Capitalism"),
+  r("C1g1", "David Harvey", "The Limits to Capital"),
+  r("C1g1", "Immanuel Wallerstein", "Historical Capitalism"),
+  r("C1g1", "Giovanni Arrighi", "The Long Twentieth Century: Money, Power, and the Origins of Our Times"),
+  r("C1g1", "Immanuel Wallerstein, Randall Collins, Michael Mann, Georgi Derluguian, and Craig Calhoun", "Does Capitalism Have a Future?"),
+  r("C1g1", "Sven Beckert", "Capitalism: A Global History"),
+  r("C1g2", "Karl Marx", "Results of the Direct Production Process"),
+  r("C1g2", "Harry Harootunian", "Marx After Marx: History and Time in the Expansion of Capitalism"),
+  r("C1g2", "Peter Sloterdijk", "In the World Interior of Capital: For a Philosophical Theory of Globalization"),
+  r("C1g2", "Ruy Mauro Marini", "The Dialectics of Dependency"),
+  r("C1g2", "Giovanni Arrighi", "The Developmentalist Illusion: A Reconceptualization of the Semiperiphery"),
+  r("C1g2", "John Smith", "Imperialism in the Twenty-First Century: Globalization, Super-Exploitation, and Capitalism's Final Crisis"),
+  r("C1g3", "John Bellamy Foster", "Marx's Ecology: Materialism and Nature"),
+  r("C1g3", "Jason W. Moore", "Capitalism in the Web of Life"),
+  r("C1g3", "Kohei Saito", "Marx in the Anthropocene: Towards the Idea of Degrowth Communism"),
+  r("C1g3", "Andreas Malm", "Fossil Capital: The Rise of Steam Power and the Roots of Global Warming"),
+  r("C1g3", "Cara New Daggett", "The Birth of Energy: Fossil Fuels, Thermodynamics, and the Politics of Work"),
+  r("C1g4", "Karl Marx", "The Fragment on Machines"),
+  r("C1g4", "Paolo Virno", "A Grammar of the Multitude: For an Analysis of Contemporary Forms of Life"),
+  r("C1g4", "Nick Srnicek and Alex Williams", "Inventing the Future: Postcapitalism and a World Without Work"),
+  r("C1g4", "Aaron Benanav", "Automation and the Future of Work"),
+  r("C1g4", "Matteo Pasquinelli", "The Eye of the Master: A Social History of Artificial Intelligence"),
+  r("C1g4", "Moishe Postone", "Time, Labor, and Social Domination"),
+  r("C1g4", "Harry Braverman", "Labor and Monopoly Capital: The Degradation of Work in the Twentieth Century"),
+  r("C1g4", "Michael Burawoy", "The Politics of Production: Factory Regimes Under Capitalism and Socialism"),
+  r("C1g4", "James Beniger", "The Control Revolution: Technological and Economic Origins of the Information Society"),
+  r("C1g5", "Philip C. C. Huang", "The Peasant Economy and Social Change in North China"),
+  r("C1g5", "Kenneth Pomeranz", "The Great Divergence: China, Europe, and the Making of the Modern World Economy"),
+  r("C1g5", "Andrew B. Liu", "Tea War: A History of Capitalism in China and India"),
+  r("C1g5", "Kaoru Sugihara", "The East Asian Path of Economic Development: A Long-Term Perspective"),
+  r("C1g5", "Giovanni Arrighi", "Adam Smith in Beijing: Lineages of the Twenty-First Century"),
+  r("C1g5", "David Harvey", "A Brief History of Neoliberalism (2005), ch. 5 Neoliberalism with Chinese Characteristics"),
+  r("C1g5", "Wen Tiejun", "Ten Crises: The Political Economy of China's Development 1949-2020"),
+  r("C1g5", "Rebecca E. Karl", "The Magic of Concepts: History and the Economic in Twentieth-Century China"),
+  r("C1g5", "Minqi Li", "The Rise of China and the Demise of the Capitalist World-Economy"),
+  r("C1g5", "Hung Ho-fung", "The China Boom: Why China Will Not Rule the World"),
+  r("C1g5", "Yasheng Huang", "Statism with Chinese Characteristics: A History of China's Reforms and Reversals"),
+  r("C1g5", "Yeling Tan", "Disaggregating China, Inc.: State Strategies in the Liberal Economic Order"),
+  r("C1g5", "Ching Kwan Lee", "The Specter of Global China: Politics, Labor, and Foreign Investment in Africa"),
+  r("C2g1", "Michael Osman", "Modernism's Visible Hand: Architecture and Regulation in America"),
+  r("C2g1", "Reinhold Martin", "The Organizational Complex: Architecture, Media, and Corporate Space"),
+  r("C2g1", "Aaron Cayer", "Incorporating Architects: How American Architecture Became a Practice of Empire"),
+  r("C2g1", "Orit Halpern", "Beautiful Data: A History of Vision and Reason Since 1945"),
+  r("C2g1", "Mattew Allen", "Flowcharting: From Abstractionism to Algorithms in Art and Architecture"),
+  r("C2g1", "Theodora Vardouli", "Graph Vision: Digital Architecture's Skeletons"),
+  r("C2g1", "John Harwood", "Interface: IBM and the Transformation of Corporate Design, 1945-1976"),
+  r("C2g2", "Aggregate ed.", "Architecture in Development: Systems and the Emergence of the Global South"),
+  r("C2g2", "Łukasz Stanek", "Architecture in Global Socialism: Eastern Europe, West Africa, and the Middle East in the Cold War"),
+  r("C2g2", "Arturo Escobar", "Encountering Development: The Making and Unmaking of the Third World"),
+  r("C2g2", "Timothy Mitchell", "Rule of Experts: Egypt, Techno-Politics, Modernity"),
+  r("C2g2", "James C. Scott", "Seeing Like a State: How Certain Schemes to Improve the Human Condition Have Failed"),
+  r("C2g2", "Daniel Immerwahr", "Thinking Small: The United States and the Lure of Community Development"),
+  r("C2g2", "David Sadighian", "The Business of Beaux-Arts: Architecture, Racial Capitalism, and Branqueamento in Belle Époque Brazil"),
+  r("C2g3", "Paul N. Edwards", "Infrastructure and Modernity: Force, Time, and Social Organization in the History of Sociotechnical Systems"),
+  r("C2g3", "Brian Larkin", "The Politics and Poetics of Infrastructure"),
+  r("C2g3", "Nikil Anand", "Hydraulic City: Water and the Infrastructures of Citizenship in Mumbai"),
+  r("C2g3", "Nikhil Anand, Akhil Gupta, and Hannah Appel", "The Promise of Infrastructure"),
+  r("C2g3", "Timothy Mitchell", "Carbon Democracy: Political Power in the Age of Oil"),
+  r("C2g3", "Deborah Cowen", "The Deadly Life of Logistics: Mapping Violence in Global Trade"),
+  r("C2g3", "Keller Easterling", "Extrastatecraft"),
+  r("C2g4", "Victor Seow", "Carbon Technocracy: Energy Regimes in Modern East Asia"),
+  r("C2g4", "Hiromi Mizuno, Aaron S. Moore and John DiMoia ed.", "Engineering Asia: Technology, Colonial Development, and the Cold War Order"),
+  r("C2g4", "Elisabeth Köll", "Railroads and the Transformation of China"),
+  r("C2g4", "Covell F. Meyskens", "Mao's Third Front: The Militarization of Cold War China"),
+  r("C2g4", "Koji Hirata", "Making Mao's Steelworks: Industrial Manchuria and the Transnational Origins of Chinese Socialism"),
+  r("C2g4", "Li Hou", "Building for Oil: Daqing and the Formation of the Chinese Socialist State"),
+  r("C2g4", "Arunabh Ghosh", "Making It Count: Statistics and Statecraft in the Early People's Republic of China"),
+  r("C2g4", "Arunabh Ghosh", "The Significance of Small Things: Small Hydropower in the People's Republic of China, 1949–1983"),
+  r("C2g4", "David A. Pietz", "The Yellow River: The Problem of Water in Modern China"),
+  r("C2g4", "Bryan Tilt", "Dams and Development in China: The Moral Economy of Water and Power"),
+  r("C2g4", "Xiao Ma", "Localized Bargaining: The Political Economy of China's High-Speed Railway Program"),
+  r("C2g5", "Edward Denison and Guang Yu Ren", "Modernism in China: Architectural Visions and Revolutions"),
+  r("C2g5", "Jeffrey W. Cody, Nancy S. Steinhardt, and Tony Atkin, eds.", "Chinese Architecture and the Beaux-Arts"),
+  r("C2g5", "Shirley Surya and Li Hua eds.", "How Modern: Biographies of Architecture in China, 1949-1979"),
+  r("C2g5", "Duanfang Lu", "Third World Modernism: Utopia, Modernity, and the People's Commune in China"),
+  r("C2g5", "Qiliang He", "The People's West Lake: Propaganda, Nature, and Agency in Mao's China, 1949–1976"),
+  r("C2g5", "Charlie Q. L. Xue and Guanghui Ding", "A History of Design Institutes in China: From Mao to Market"),
+  r("C2g5", "Cole Roskam", "Designing Reform: Architecture in the People's Republic of China, 1970–1992"),
+  r("C2g5", "Mary Ann O'Donnell, Winnie Wong, and Jonathan Bach eds.", "Learning from Shenzhen: China's Post-Mao Experiment from Special Zone to Model City"),
+  r("C2g5", "You-tien Hsing", "The Great Urban Transformation: Politics of Land and Property in China"),
+  r("C2g5", "Fulong Wu", "Planning for Growth: Urban and Regional Planning in China"),
+  r("D1g1", "Jessica Riskin", "The Restless Clock: A History of the Centuries-Long Argument over What Makes Living Things Tick"),
+  r("D1g1", "John Tresch", "The Romantic Machine: Utopian Science and Technology after Napoleon"),
+  r("D1g1", "Edward Jones-Imhotep", "The Ghost Factories: Histories of Automata and Artificial Life"),
+  r("D1g1", "Edward Jones-Imhotep", "The Broken Machine: Histories of Technology, Social Order, and the Self"),
+  r("D1g1", "Laura Otis", "Networking: Communicating with Bodies and Machines in the Nineteenth Century"),
+  r("D1g1", "Evelyn Fox Keller", "Organisms, Machines, and Thunderstorms: A History of Self-Organization, Part One"),
+  r("D1g1", "Matteo Pasquinelli", "The Eye of the Master: A Social History of Artificial Intelligence"),
+  r("D1g2", "Cara New Daggett", "The Birth of Energy: Fossil Fuels, Thermodynamics, and the Politics of Work"),
+  r("D1g2", "Anson Rabinbach", "The Human Motor: Energy, Fatigue, and the Origins of Modernity"),
+  r("D1g2", "Fredrik Albritton Jonsson", "The Industrial Revolution in the Anthropocene"),
+  r("D1g3", "Timothy Lenoir", "The Strategy of Life: Teleology and Mechanics in Nineteenth-Century German Biology"),
+  r("D1g3", "Anna Harrington", "Reenchanted Science: Holism in German Culture from Wilhelm II to Hitler"),
+  r("D1g3", "George Canguilhem", "The Living and Its Milieu"),
+  r("D2g1", "Peter Galison", "The Ontology of the Enemy: Norbert Wiener and the Cybernetic Vision"),
+  r("D2g1", "David A. Mindell", "Between Human and Machine: Feedback, Control, and Computing before Cybernetics"),
+  r("D2g1", "Ronald R. Kline", "The Cybernetics Moment, Or Why We Call Our Age the Information Age"),
+  r("D2g1", "Paul N. Edwards", "The Closed World: Computers and the Politics of Discourse in Cold War America"),
+  r("D2g2", "R. John Williams", "World Futures"),
+  r("D2g2", "Jenny Andersson", "The Future of the World: Futurology, Futurists, and the Struggle for the Post-Cold War Imagination"),
+  r("D2g2", "Orit Halpern", "Beautiful Data: A History of Vision and Reason since 1945"),
+  r("D2g2", "Hunter Heyck", "Age of System: Understanding the Development of Modern Social Science"),
+  r("D2g2", "Elizabeth Popp Berman", "Thinking Like an Economist: How Efficiency Replaced Equality in U.S. Public Policy (2022), ch. 3 How to Make Government Decisions; ch. 4 How to Govern Markets"),
+  r("D2g2", "Eglė Rindzevičiūtė", "The Power of Systems: How Policy Sciences Opened Up the Cold War World"),
+  r("D2g3", "Libby Suzanne O'Neil", "The Science of Not Knowing: Systems Thinking between Vienna and the United States, 1900-1972"),
+  r("D2g3", "Andrew Pickering", "The Cybernetic Brain: Sketches of Another Future"),
+  r("D2g3", "Fred Turner", "From Counterculture to Cyberculture: Stewart Brand, the Whole Earth Network, and the Rise of Digital Utopianism"),
+  r("D2g4", "Slava Gerovitch", "From Newspeak to Cyberspeak: A History of Soviet Cybernetics"),
+  r("D2g4", "Eden Medina", "Cybernetic Revolutionaries: Technology and Politics in Allende's Chile"),
+  r("D2g4", "Victor Petrov", "Balkan Cyberia: Cold War Computing, Bulgarian Modernization, and the Information Age behind the Iron Curtain"),
+  r("D2g4", "Xiao Liu", "Information Fantasies: Precarious Mediation in Postsocialist China"),
+  r("D2g4", "Susan Greenhalgh", "Just One Child: Science and Policy in Deng's China"),
+  r("D3g1", "Evelyn Fox Keller", "Organisms, Machines, and Thunderstorms: A History of Self-Organization, Part Two. Complexity, Emergence, and Stable Attractors"),
+  r("D3g1", "Melinda E. Cooper", "Life as Surplus: Biotechnology and Capitalism in the Neoliberal Era (2008), ch. 1 Life Beyond the Limits"),
+  r("D3g1", "Fabrizio Li Vigni", "Hayek at the Santa Fe Institute: Origins, Models, and Organization of the Cradle of Complexity Sciences"),
+  r("D3g1", "Quinn Slobodian", "Globalists: The End of Empire and the Birth of Neoliberalism"),
+  r("D3g1", "James Walker and Melinda Cooper", "Genealogies of Resilience: From Systems Ecology to the Political Economy of Crisis Adaptation"),
+  r("D3g1", "Robert Mitchell and Orit Halpern", "The Smartness Mandate"),
+  r("D4g1", "Buckminster Fuller", "Operating Manual for Spaceship Earth"),
+  r("D4g1", "James Lovelock", "Gaia: A New Look at Life on Earth"),
+  r("D4g1", "Sheila Jasanoff", "Image and Imagination: The Formation of Global Environmental Consciousness"),
+  r("D4g1", "Andrew Kirk", "Machines of Loving Grace: Alternative Technology, Environment, and the Counterculture"),
+  r("D4g1", "Etienne Benson", "Surroundings: A History of Environments and Environmentalisms"),
+  r("D4g1", "Paul Warde, Libby Robin, and Sverker Sörlin", "The Environment: A History of the Idea"),
+  r("D4g1", "Daniel Belgrad", "The Culture of Feedback: Ecological Thinking in Seventies America"),
+  r("D4g2", "Robert Mitchell, Orit Halpern, and Henning Schmidgen", "The Planetary Experiment: A History and Theory of Science at Scale"),
+  r("D4g2", "Deborah R. Coen and Fredrik Albritton Jonsson", "Between History and Earth System Science"),
+  r("D4g2", "Jenifer Patricia Barton", "Wiring the World: A History of the Earth System Concept in the US Earth Sciences, 1982-1989"),
+  r("D4g2", "Sabine Hohler", "Spaceship Earth in the Environmental Age 1960-1990"),
+  r("D4g2", "Simone Turchetti", "The World United in Studying Itself? Data and the Coloniality of the International Geophysical Year, 1957-1958"),
+  r("D4g2", "Perrin Selcer", "The Postwar Origins of the Global Environment: How the United Nations Built Spaceship Earth"),
+  r("D4g2", "Paul N. Edwards", "A Vast Machine: Computer Models, Climate Data, and the Politics of Global Warming"),
+  r("D4g2", "William Rankin", "After the Map: Cartography, Navigation, and the Transformation of Territory in the Twentieth Century"),
+  r("D4g2", "Giulia Rispoli and Doubravka Olsakova", "Science and Diplomacy around the Earth: From the Man and Biosphere Programme to the International Geosphere-Biosphere Programme"),
+];
+
+const todayKey = toKey(new Date());
+const SEED = {
+  lists: SEED_LISTS,
+  readings: SEED_READINGS,
+  meetings: {},
+  people: [
+    { name: "Jing Tsu", listId: "A" },
+    { name: "Jinyi Chu", listId: "B" },
+    { name: "David Sadighian", listId: "C" },
+    { name: "Michael Osman", listId: null },
+    { name: "Deborah Coen", listId: "D" },
+  ],
+  teachDays: [1, 2],
+  poolWidth: 356,
+  start: todayKey,
+  exam: toKey(addDays(new Date(), 180)),
+};
+
+const STORE_KEY = "qe-planner:v4";
+
+/* ------------------------------------------------------------------
+   跨电脑同步：把数据直接读写到一个 JSON 文件（放 OneDrive 即可同步）
+   文件句柄存在 IndexedDB 里 —— localStorage 存不下这种对象
+   ------------------------------------------------------------------ */
+const FS_OK = typeof window !== "undefined" && "showSaveFilePicker" in window;
+
+const idbOpen = () => new Promise((res, rej) => {
+  const req = indexedDB.open("qe-planner-fs", 1);
+  req.onupgradeneeded = () => req.result.createObjectStore("kv");
+  req.onsuccess = () => res(req.result);
+  req.onerror = () => rej(req.error);
+});
+const idbGet = async (k) => {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readonly").objectStore("kv").get(k);
+    t.onsuccess = () => res(t.result); t.onerror = () => rej(t.error);
+  });
+};
+const idbPut = async (k, v) => {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readwrite").objectStore("kv").put(v, k);
+    t.onsuccess = () => res(); t.onerror = () => rej(t.error);
+  });
+};
+const idbDel = async (k) => {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const t = db.transaction("kv", "readwrite").objectStore("kv").delete(k);
+    t.onsuccess = () => res(); t.onerror = () => rej(t.error);
+  });
+};
+
+const readHandle = async (h) => {
+  const f = await h.getFile();
+  const text = await f.text();
+  return text.trim() ? JSON.parse(text) : null;
+};
+const writeHandle = async (h, payload) => {
+  const w = await h.createWritable();
+  await w.write(JSON.stringify(payload, null, 2));
+  await w.close();
+};
+const stamp = (t) => new Date(t).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const freshSeed = () => JSON.parse(JSON.stringify(SEED));
+
+/* ------------------------------------------------------------------ */
+const CSS = `
+.qe{
+  /* ==================================================================
+     文本格式总控 —— 想改字体、字号、粗细、字距，改这一段就够了
+     ================================================================== */
+
+  /* —— 字体族 —— */
+  --f-ui:"Inter","Helvetica Neue",Helvetica,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --f-serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Songti SC",serif;
+  --f-num:ui-monospace,"SF Mono",Menlo,Consolas,monospace;   /* 数字、日期 */
+  --f-title:var(--f-ui);   /* 所有书目名用的字体。想改回衬线体：把这行改成 var(--f-serif) */
+
+  /* —— 左栏：三级标题，靠字号递减区分层级 —— */
+  --fs-list:13.5px;  --fw-list:700;                  /* 一级：书单名 */
+  --fs-exam:10.5px;                                  /*       考官名 */
+  --fs-sec:12.5px;   --fw-sec:700;                   /* 二级板块 */
+  --fs-grp:11.5px;   --fw-grp:700;                   /* 三级板块 */
+  /* —— 左栏：书目与作者 —— */
+  --fs-book:12.5px;  --lh-book:1.35;
+  --fs-author:10.5px;
+  --pad-book:6px;                                    /* 书目上下间距，调大即拉开行距 */
+  --indent:28px;                                     /* 书目文本起始位置；板块标题与它对齐 */
+
+  /* —— 日历 —— */
+  --fs-chip:12px;                                    /* 日历格里的书目 */
+  --chip-lines:2;                                    /* 书目最多显示几行 */
+  --chip-lh:1.45;                                    /* 书目行距，调大即松 */
+  --chip-pad:4px 7px;                                /* 书目块内边距 */
+  --day-h:132px;                                     /* 日历格最小高度 */
+  --day-gap:5px;                                     /* 格内各书目之间的间隔 */
+  --fs-daynum:11px;                                  /* 日期数字 */
+  --fs-meet:10.5px;                                  /* 会面日的老师名 */
+  --fs-month:12px;
+
+  /* —— 顶部统计 —— */
+  --fs-rate:31px;    --fs-stat:17px;   --fs-label:11px;
+
+  /* —— 弹窗 —— */
+  --fs-modal-title:15px;  --fs-modal-body:12.5px;
+
+  /* ==================================================================
+     配色
+     ================================================================== */
+  --paper:#F2F3EF; --panel:#F8F9F6; --ink:#1C2733; --dim:#767C72;
+  --rule:#DADDD4; --hair:#EAECE6; --signal:#C0392B; --white:#FFFFFF;
+  --teach:#EDEEEA; --out:#F9FAF7;
+  --bg-l1:#E7E9E2; --bg-l2:#EFF1EB; --bg-l3:#F6F7F3;   /* 三级标题底色 */
+
+  font-family:var(--f-ui);color:var(--ink);background:var(--paper);
+  height:100%;display:flex;flex-direction:column;font-size:13px}
+.qe *{box-sizing:border-box}
+.qe button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer;border:none;background:none}
+.qe input,.qe select,.qe textarea{font-family:inherit;font-size:inherit;color:inherit}
+.qe :focus-visible{outline:2px solid var(--signal);outline-offset:1px}
+
+/* ---------- 顶部进度条 ---------- */
+.qe-prog{display:flex;align-items:center;gap:16px;padding:11px 18px;
+  background:var(--white);border-bottom:1px solid var(--hair)}
+.qe-track2{flex:1;height:16px;background:var(--hair);border-radius:8px;overflow:hidden;display:flex}
+.qe-seg{height:100%}
+.qe-pnum{font-family:var(--f-num);font-size:13px;color:var(--dim);flex:none;letter-spacing:.01em}
+.qe-pnum b{color:var(--ink);font-weight:600;font-size:15px}
+.qe-sync{display:flex;align-items:center;gap:6px;flex:none;font-size:11.5px;color:var(--dim)}
+.qe-syncdot{width:7px;height:7px;border-radius:50%;background:#0CA678;flex:none}
+.qe-syncname{font-family:var(--f-num);max-width:150px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.qe .qe-btn.warn{border-color:var(--signal);color:var(--signal)}
+.qe-syncerr{color:var(--signal)}
+
+/* ---------- 顶部统计 ---------- */
+.qe-top{display:flex;align-items:flex-end;gap:26px;padding:11px 18px;
+  border-bottom:1px solid var(--rule);background:var(--white);flex-wrap:wrap}
+.qe-rate{display:flex;align-items:baseline;gap:8px}
+.qe-rate b{font-family:var(--f-num);font-size:var(--fs-rate);font-weight:600;line-height:.9;letter-spacing:-.02em}
+.qe-rate span{color:var(--dim);max-width:118px;line-height:1.25}
+.qe-stat{display:flex;flex-direction:column;gap:3px}
+.qe-stat i{font-style:normal;color:var(--dim);font-size:var(--fs-label)}
+.qe-stat b{font-family:var(--f-num);font-size:var(--fs-stat);font-weight:500}
+.qe-dates{display:flex;gap:13px;margin-left:auto;align-items:flex-end}
+.qe-field{display:flex;flex-direction:column;gap:3px}
+.qe-field i{font-style:normal;color:var(--dim);font-size:var(--fs-label)}
+.qe-field input{border:1px solid var(--rule);background:var(--white);border-radius:3px;
+  padding:3px 5px;font-family:var(--f-num);font-size:12px}
+
+.qe-body{flex:1;display:flex;min-height:0}
+.qe-pool{flex:none;background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.qe-split{width:6px;flex:none;cursor:col-resize;background:var(--paper);
+  border-left:1px solid var(--rule);border-right:1px solid var(--rule);
+  transition:background .12s}
+.qe-split:hover,.qe-split.on{background:var(--signal)}
+.qe-cal{flex:1;overflow-y:auto;min-width:0;padding-bottom:60px;background:var(--white)}
+
+/* ---------- 左栏 ---------- */
+.qe-poolhead{padding:9px 14px;border-bottom:1px solid var(--rule);
+  display:flex;align-items:center;justify-content:space-between;gap:8px}
+.qe-poolhead h2{margin:0;font-size:13px;font-weight:600}
+.qe-poolhead em{font-style:normal;font-family:var(--f-num);color:var(--dim);font-size:12px}
+.qe-tools{display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--hair);flex-wrap:wrap}
+.qe .qe-btn{border:1px solid var(--rule);background:var(--white);border-radius:3px;
+  padding:3px 9px;font-size:12px;transition:background .12s}
+.qe .qe-btn:hover{background:var(--paper)}
+.qe .qe-btn.on{background:var(--ink);color:var(--white);border-color:var(--ink)}
+.qe .qe-btn.sm{padding:1px 7px;font-size:11px}
+.qe-poollist{flex:1;overflow-y:auto;padding:0 0 24px;background:var(--white)}
+
+/* 一级：书单 */
+.qe .qe-lhead{display:flex;align-items:center;gap:6px;padding:8px 12px 8px 6px;width:100%;
+  text-align:left;border-top:1px solid var(--rule);background:var(--bg-l1);
+  position:sticky;top:0;z-index:3}
+.qe .qe-lhead:hover{filter:brightness(.985)}
+.qe .qe-lhead.grab{cursor:grab}
+.qe .qe-lhead.dragging{opacity:.4}
+.qe .qe-lhead.dropinto{box-shadow:inset 0 3px 0 0 var(--signal)}
+.qe-grip{color:var(--rule);font-size:11px;flex:none;opacity:0;letter-spacing:-1px}
+.qe .qe-lhead:hover .qe-grip{opacity:1}
+.qe-swatch{width:4px;align-self:stretch;border-radius:2px;flex:none;min-height:22px}
+.qe-lname{flex:1;min-width:0}
+.qe-lname b{display:block;font-size:var(--fs-list);font-weight:var(--fw-list);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qe-lname i{display:block;font-style:normal;font-size:var(--fs-exam);color:var(--dim);margin-top:1px}
+.qe-count{font-family:var(--f-num);font-size:11px;color:var(--dim);flex:none}
+
+/* 二级板块 */
+.qe .qe-shead{display:flex;align-items:center;gap:0;width:100%;text-align:left;
+  padding:7px 12px 7px 6px;background:var(--bg-l2);border-top:1px solid var(--rule)}
+.qe .qe-shead:hover{filter:brightness(.985)}
+.qe-shead .qe-label{font-size:var(--fs-sec);font-weight:var(--fw-sec)}
+
+/* 三级板块 */
+.qe .qe-ghead{display:flex;align-items:center;gap:0;width:100%;text-align:left;
+  padding:5px 12px 5px calc(var(--indent) - 14px);background:var(--bg-l3);
+  border-top:1px solid var(--hair)}
+.qe .qe-ghead:hover{filter:brightness(.985)}
+.qe-ghead .qe-label{font-size:var(--fs-grp);font-weight:var(--fw-grp)}
+
+/* 折叠箭头占住左侧槽位，使标题文本与书目文本左对齐 */
+.qe-caret{width:14px;flex:none;text-align:center;font-size:8px;color:var(--dim)}
+.qe-label{flex:1;min-width:0;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 书目 */
+.qe-item{display:flex;align-items:flex-start;gap:6px;background:var(--white);
+  padding:var(--pad-book) 8px var(--pad-book) var(--indent);
+  cursor:grab;border-left:3px solid transparent;border-top:1px solid var(--hair)}
+.qe .qe-item:hover{background:#FBFCFA}
+.qe-item.held{background:#FBFCFA;border-left-color:var(--signal)}
+.qe-item.placed{background:#FBFCF9}
+.qe-item.placed .qe-title{color:var(--dim)}
+.qe-item.placed .qe-auth{opacity:.7}
+.qe-item.done .qe-title{text-decoration:line-through;opacity:.42}
+.qe-item.done .qe-auth{opacity:.42}
+.qe-datechip{font-family:var(--f-num);font-size:10px;color:var(--dim);flex:none;
+  border:1px solid var(--hair);border-radius:3px;padding:1px 4px;line-height:1.4}
+.qe-datechip:hover{border-color:var(--signal);color:var(--signal)}
+.qe-item.done .qe-datechip{opacity:.45}
+.qe-meta{min-width:0;flex:1;display:flex;flex-direction:column}
+.qe-title{font-family:var(--f-title);font-size:13px;line-height:1.3;display:block}
+.qe-item .qe-title{font-size:var(--fs-book);line-height:var(--lh-book);font-weight:400;order:2}
+.qe-auth{color:var(--dim);font-size:var(--fs-author);display:block;margin-top:1px}
+.qe-item .qe-auth{order:1;margin:0 0 2px;letter-spacing:.01em}
+.qe-edit{opacity:0;color:var(--dim);font-size:12px;padding:2px 4px;flex:none}
+.qe-item:hover .qe-edit{opacity:1}
+.qe-edit:hover{color:var(--ink)}
+.qe-hasnote{color:var(--dim);font-size:10px;vertical-align:2px}
+.qe-notetext{display:block;color:var(--dim);font-size:11px;margin-top:2px;
+  padding-left:7px;border-left:2px solid var(--hair);line-height:1.45}
+.qe-empty{padding:18px 14px;color:var(--dim);line-height:1.5}
+
+.qe-add{border-top:1px solid var(--rule);background:var(--white);
+  display:flex;flex-direction:column}
+.qe .qe-addtoggle{display:flex;align-items:center;gap:6px;width:100%;text-align:left;
+  padding:7px 14px;font-size:12px;color:var(--dim);background:var(--white)}
+.qe .qe-addtoggle:hover{background:var(--panel);color:var(--ink)}
+.qe-addbody{display:flex;flex-direction:column;gap:6px;padding:2px 14px 10px;
+  border-top:1px solid var(--hair)}
+.qe-add input,.qe-add select{border:1px solid var(--rule);border-radius:3px;
+  padding:4px 6px;font-size:12px;width:100%;background:var(--white)}
+.qe-addrow{display:flex;gap:6px}
+
+/* ---------- 日历 ---------- */
+.qe-month{position:sticky;top:0;z-index:3;background:var(--paper);
+  border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+  padding:6px 16px;font-size:var(--fs-month);font-weight:600}
+.qe-wdays{display:grid;grid-template-columns:repeat(7,1fr) 66px;
+  border-bottom:1px solid var(--rule);background:var(--paper)}
+.qe-wdays div{padding:4px 8px;font-size:var(--fs-label);color:var(--dim);border-right:1px solid var(--hair)}
+.qe-wdays div.tg{background:var(--teach);color:var(--ink)}
+.qe-week{display:grid;grid-template-columns:repeat(7,1fr) 66px;border-bottom:1px solid var(--rule)}
+.qe-day{border-right:1px solid var(--hair);min-height:var(--day-h);padding:6px 6px 8px;
+  display:flex;flex-direction:column;gap:var(--day-gap);background:var(--white);
+  cursor:pointer;transition:box-shadow .1s;overflow:hidden}
+.qe-day.teach{background:var(--teach)}
+.qe-day.out{background:var(--out);color:var(--dim)}
+.qe-day.over{box-shadow:inset 0 0 0 2px var(--signal)}
+.qe-day.today .qe-num{background:var(--ink);color:var(--white);border-radius:3px;padding:0 4px}
+.qe-day.meet{color:#fff}
+.qe-day.meet .qe-num{color:rgba(255,255,255,.88)}
+.qe-names{display:flex;flex:none;gap:0}
+.qe-nameseg{flex:1;min-width:0;color:#fff;font-size:var(--fs-meet);font-weight:600;
+  line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qe-day.meet .qe-chip{background:rgba(255,255,255,.94)!important;
+  border-left-color:rgba(255,255,255,.55)}
+.qe-dnum{display:flex;align-items:center;justify-content:space-between;gap:4px;
+  margin-bottom:1px}
+.qe-num{font-family:var(--f-num);font-size:var(--fs-daynum);color:var(--dim)}
+.qe-teachtag{font-size:10px;color:var(--dim)}
+.qe-chip{border-left:3px solid;border-radius:3px;padding:var(--chip-pad);
+  line-height:var(--chip-lh);cursor:grab;overflow:hidden;font-family:var(--f-title);
+  font-size:var(--fs-chip);white-space:normal;word-break:break-word;
+  display:-webkit-box;-webkit-box-orient:vertical;
+  -webkit-line-clamp:var(--chip-lines);line-clamp:var(--chip-lines)}
+.qe-chip.done{opacity:.42;text-decoration:line-through}
+.qe-more{font-family:var(--f-num);font-size:10px;color:var(--dim);padding-left:2px}
+
+.qe-load{padding:6px 8px;display:flex;flex-direction:column;gap:4px;
+  background:var(--panel);justify-content:center;border-left:1px solid var(--rule)}
+.qe-loadn{font-family:var(--f-num);font-size:11px}
+.qe-loadn em{font-style:normal;color:var(--dim)}
+.qe-track{height:4px;background:var(--hair);border-radius:2px;overflow:hidden}
+.qe-fill{height:100%;background:var(--ink);border-radius:2px}
+.qe-fill.hot{background:var(--signal)}
+
+/* ---------- 弹窗 ---------- */
+.qe-scrim{position:fixed;inset:0;background:rgba(28,39,51,.3);z-index:20;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.qe-scrim.top{z-index:25;background:rgba(28,39,51,.24)}
+.qe-modal{background:var(--white);border-radius:4px;width:min(640px,100%);
+  max-height:88vh;display:flex;flex-direction:column;box-shadow:0 16px 44px rgba(28,39,51,.18)}
+.qe-modal.narrow{width:min(430px,100%)}
+.qe-mh{padding:13px 16px;border-bottom:1px solid var(--rule);
+  display:flex;align-items:center;justify-content:space-between;gap:10px}
+.qe-mh h3{margin:0;font-size:var(--fs-modal-title);font-weight:600}
+.qe-mh p{margin:3px 0 0;color:var(--dim);font-size:11.5px}
+.qe-mb{overflow-y:auto;padding:13px 16px;display:flex;flex-direction:column;gap:14px}
+.qe-sect h4{margin:0 0 7px;font-size:11.5px;color:var(--dim);font-weight:500}
+.qe-people{display:flex;flex-wrap:wrap;gap:5px}
+.qe .qe-pbtn{border:1px solid var(--rule);background:var(--white);border-radius:3px;
+  padding:3px 9px;font-size:12px;display:flex;align-items:center;gap:6px}
+.qe-pdot{width:8px;height:8px;border-radius:2px;flex:none}
+.qe-prow{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:1px solid var(--hair)}
+.qe-in{width:100%;border:1px solid var(--rule);border-radius:3px;padding:5px 7px;
+  font-size:var(--fs-modal-body);background:var(--white)}
+.qe-note{width:100%;border:1px solid var(--rule);border-radius:3px;padding:5px 7px;
+  font-size:12px;font-family:inherit;resize:vertical;min-height:52px}
+.qe-ta{width:100%;border:1px solid var(--rule);border-radius:3px;padding:6px 8px;
+  font-size:12px;font-family:var(--f-num);resize:vertical;min-height:150px;line-height:1.5}
+.qe-x{color:var(--dim);font-size:13px;line-height:1;padding:2px 4px;flex:none}
+.qe-x:hover{color:var(--signal)}
+.qe-hint{color:var(--dim);font-size:11.5px;line-height:1.6;margin:0}
+.qe-dots{display:flex;gap:6px;flex-wrap:wrap}
+.qe .qe-dot{width:20px;height:20px;border-radius:4px;border:2px solid transparent}
+.qe-dot.on{border-color:var(--ink)}
+
+/* 书单编辑器 */
+.qe-sec{border:1px solid var(--rule);border-radius:4px;margin-bottom:10px;overflow:hidden}
+.qe-sech{display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--panel)}
+.qe-sech input{flex:1;border:1px solid transparent;background:transparent;border-radius:3px;
+  padding:3px 5px;font-size:12.5px;font-weight:700;min-width:0}
+.qe-grp{border-top:1px solid var(--hair)}
+.qe-grph{display:flex;align-items:center;gap:4px;padding:4px 8px 4px 16px;background:#FCFDFB}
+.qe-grph input{flex:1;border:1px solid transparent;background:transparent;border-radius:3px;
+  padding:2px 5px;font-size:12px;font-weight:600;min-width:0}
+.qe-sech input:hover,.qe-grph input:hover{border-color:var(--rule)}
+.qe-sech input:focus,.qe-grph input:focus{border-color:var(--rule);background:var(--white);outline:none}
+.qe-book{display:flex;align-items:center;gap:5px;padding:2px 8px 2px 24px;border-top:1px solid #F1F3EE}
+.qe-book .t{flex:1;min-width:0;font-family:var(--f-title);font-size:12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qe-book .a{color:var(--dim);font-size:10.5px;flex:none;max-width:30%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qe-newbook{display:flex;gap:5px;padding:4px 8px 5px 24px;border-top:1px solid #F1F3EE}
+.qe-newbook input{border:1px solid var(--rule);border-radius:3px;padding:2px 6px;font-size:11.5px;min-width:0}
+
+.qe-held{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:var(--white);border-radius:4px;z-index:15;
+  padding:8px 14px;display:flex;align-items:center;gap:12px;font-size:12px;
+  box-shadow:0 8px 24px rgba(28,39,51,.28);max-width:80%}
+.qe-held span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qe-held button{color:var(--white);text-decoration:underline;opacity:.85;flex:none}
+
+@media (max-width:880px){
+  .qe-body{flex-direction:column}
+  .qe-pool{width:100%!important;max-height:46%;border-bottom:1px solid var(--rule)}
+  .qe-split{display:none}
+}
+@media (prefers-reduced-motion:reduce){.qe *{transition:none!important}}
+`;
+
+/* ------------------------------------------------------------------ */
+/* bulk paste: "# 二级板块" / "## 三级板块" / other lines = readings    */
+function parseBulk(text) {
+  const secs = [];
+  let cs = null, cg = null;
+  const ensureS = () => { if (!cs) { cs = { name: "未分板块", groups: [] }; secs.push(cs); cg = null; } };
+  const ensureG = () => { ensureS(); if (!cg) { cg = { name: "未分组", items: [] }; cs.groups.push(cg); } };
+  text.split("\n").forEach((raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    const h = line.match(/^(#+)\s*(.*)$/);
+    if (h) {
+      if (h[1].length === 1) { cs = { name: h[2].trim() || "未命名", groups: [] }; secs.push(cs); cg = null; }
+      else { ensureS(); cg = { name: h[2].trim() || "未命名", items: [] }; cs.groups.push(cg); }
+      return;
+    }
+    ensureG();
+    let s = line.replace(/^[-*•]\s*/, "").replace(/^\d+[.)]\s*/, "").replace(/\s*#.*$/, "").trim();
+    s = s.replace(/\s*\((?:\[\d{4}\]\s*)?\d{4}\)\s*$/, "").replace(/[;；]\s*$/, "").trim();
+    let author = "", title = s;
+    const q = s.search(/["\u201C\u300A]/);
+    if (q > 0) { author = s.slice(0, q).replace(/[,，、]\s*$/, "").trim(); title = s.slice(q).trim(); }
+    else if (q !== 0) {
+      const ed = s.match(/\beds?\.?,\s+/);
+      const al = s.match(/,\s+and\s+[^,]+,\s+/);
+      const cut = ed ? ed.index + ed[0].length : (al ? al.index + al[0].length : null);
+      if (cut !== null) { author = s.slice(0, cut).replace(/,\s*$/, "").trim(); title = s.slice(cut).trim(); }
+      else {
+        const c = s.search(/[,，]/);
+        if (c > 0) { author = s.slice(0, c).trim(); title = s.slice(c + 1).trim(); }
+      }
+    }
+    const PAIRS = { "\u201C": "\u201D", '"': '"', "\u300A": "\u300B", "\u300C": "\u300D" };
+    if (PAIRS[title[0]] && title.slice(-1) === PAIRS[title[0]] && title.length > 2)
+      title = title.slice(1, -1).trim();
+    title = title.replace(/[,，]\s*$/, "").trim();
+    if (title) cg.items.push({ author, title });
+  });
+  return secs.filter((s) => s.groups.some((g) => g.items.length));
+}
+
+/* ------------------------------------------------------------------ */
+function QEPlanner() {
+  const [data, setData] = useState(null);
+  const [saveErr, setSaveErr] = useState(false);
+  const [held, setHeld] = useState(null);
+  const [openDay, setOpenDay] = useState(null);
+  const [organize, setOrganize] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulk, setBulk] = useState("");
+  const [replaceMode, setReplaceMode] = useState(false);
+  const [newBook, setNewBook] = useState({});
+  const [dragOver, setDragOver] = useState(null);
+  const [dragList, setDragList] = useState(null);
+  const [dropList, setDropList] = useState(null);
+  const [filter, setFilter] = useState("all");
+  const [fold, setFold] = useState({});
+  const [showAdd, setShowAdd] = useState(false);
+  const [resizing, setResizing] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [fh, setFh] = useState(null);        // FileSystemFileHandle
+  const [perm, setPerm] = useState("prompt");
+  const [syncMsg, setSyncMsg] = useState("");
+  const stampRef = useRef(0);                // 本机数据的最后写入时间
+  const [draft, setDraft] = useState({ author: "", title: "", groupId: "A1g1" });
+  const fileRef = useRef(null);
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      let local = null;
+      try {
+        const raw = localStorage.getItem(STORE_KEY);
+        local = raw ? JSON.parse(raw) : null;
+      } catch { local = null; }
+      if (!alive) return;
+      stampRef.current = (local && local.updatedAt) || 0;
+      setData(local || freshSeed());
+      if (!FS_OK) return;
+      try {
+        const h = await idbGet("fileHandle");
+        if (!h || !alive) return;
+        setFh(h);
+        const p = await h.queryPermission({ mode: "readwrite" });
+        setPerm(p);
+        if (p === "granted") {
+          const remote = await readHandle(h);
+          if (remote && alive && (remote.updatedAt || 0) > stampRef.current) {
+            if (window.confirm(`同步文件里有更新的数据（${stamp(remote.updatedAt)}），载入吗？\n本机当前的版本会被替换。`)) {
+              stampRef.current = remote.updatedAt || 0;
+              setData(remote);
+            }
+          }
+        }
+      } catch (err) { /* 文件不可用时静默降级为本机存储 */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!data) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      const now = Date.now();
+      stampRef.current = now;
+      const payload = { ...data, updatedAt: now };
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+        setSaveErr(false);
+      } catch { setSaveErr(true); }
+      if (fh && perm === "granted") {
+        try { await writeHandle(fh, payload); setSyncMsg(""); }
+        catch (err) { setSyncMsg("写入同步文件失败"); }
+      }
+    }, 600);
+    return () => clearTimeout(saveTimer.current);
+  }, [data, fh, perm]);
+
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key !== "Escape") return;
+      if (editing) setEditing(null);
+      else if (showBulk) setShowBulk(false);
+      else { setHeld(null); setOpenDay(null); setOrganize(null); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [editing, showBulk]);
+
+  const patch = useCallback((fn) => setData((d) => (d ? fn({ ...d }) : d)), []);
+
+  /* 左栏宽度：拖动中缝调节，存进数据所以刷新后保持 */
+  const startResize = (e) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = (data && data.poolWidth) || 356;
+    setResizing(true);
+    const move = (ev) => {
+      const w = Math.max(240, Math.min(680, w0 + ev.clientX - x0));
+      setData((d) => (d ? { ...d, poolWidth: w } : d));
+    };
+    const up = () => {
+      setResizing(false);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  const gIndex = useMemo(() => {
+    const m = {};
+    (data?.lists || []).forEach((l) => l.sections.forEach((s) =>
+      s.groups.forEach((g) => { m[g.id] = { list: l, section: s, group: g }; })));
+    return m;
+  }, [data]);
+
+  const personList = useMemo(() => {
+    const m = {};
+    (data?.people || []).forEach((p) => { m[p.name] = p.listId; });
+    return m;
+  }, [data]);
+
+  const blocked = useCallback((k) => {
+    if (!data) return false;
+    if (data.meetings[k]) return true;
+    return (data.teachDays || []).includes(dow(k));
+  }, [data]);
+
+  const weeks = useMemo(() => {
+    if (!data) return [];
+    const last = fromKey(data.exam);
+    const out = [];
+    let cur = startOfWeek(fromKey(data.start));
+    let g = 0;
+    while (cur <= last && g++ < 160) {
+      out.push(Array.from({ length: 7 }, (_, i) => toKey(addDays(cur, i))));
+      cur = addDays(cur, 7);
+    }
+    return out;
+  }, [data]);
+
+  const byDate = useMemo(() => {
+    const m = {};
+    (data?.readings || []).forEach((x) => { if (x.date) (m[x.date] = m[x.date] || []).push(x); });
+    return m;
+  }, [data]);
+
+  const stats = useMemo(() => {
+    if (!data) return null;
+    const rs = data.readings;
+    const un = rs.filter((x) => !x.date).length;
+    const done = rs.filter((x) => x.done).length;
+    const daysLeft = Math.max(0, daysBetween(todayKey, data.exam));
+    let free = 0;
+    for (let i = 0; i <= daysLeft; i++) if (!blocked(toKey(addDays(new Date(), i)))) free++;
+    const perList = data.lists.map((l) => ({
+      color: l.color,
+      done: rs.filter((x) => x.done && gIndex[x.groupId] && gIndex[x.groupId].list.id === l.id).length,
+    }));
+    return { total: rs.length, un, done, daysLeft, free,
+             rate: free ? un / free : 0, perList };
+  }, [data, blocked, gIndex]);
+
+  const peak = useMemo(() => {
+    const c = weeks.map((w) => w.reduce((s, k) => s + (byDate[k] ? byDate[k].length : 0), 0));
+    return Math.max(4, ...c);
+  }, [weeks, byDate]);
+
+  /* ---------- readings ---------- */
+  const assign = (id, k) => {
+    patch((d) => { d.readings = d.readings.map((x) => (x.id === id ? { ...x, date: k } : x)); return d; });
+    setHeld(null);
+  };
+  const unassign = (id) => patch((d) => { d.readings = d.readings.map((x) => (x.id === id ? { ...x, date: null } : x)); return d; });
+  const toggleDone = (id) => patch((d) => { d.readings = d.readings.map((x) => (x.id === id ? { ...x, done: !x.done } : x)); return d; });
+  const updateReading = (id, f) => patch((d) => { d.readings = d.readings.map((x) => (x.id === id ? { ...x, ...f } : x)); return d; });
+  const removeReading = (id) => patch((d) => { d.readings = d.readings.filter((x) => x.id !== id); return d; });
+
+  const addReading = () => {
+    if (!draft.title.trim()) return;
+    patch((d) => {
+      d.readings = [...d.readings, { id: uid(), groupId: draft.groupId,
+        author: draft.author.trim(), title: draft.title.trim(), note: "", date: null, done: false }];
+      return d;
+    });
+    setDraft((s) => ({ ...s, author: "", title: "" }));
+  };
+  const addBookToGroup = (gid) => {
+    const v = newBook[gid];
+    if (!v || !(v.title || "").trim()) return;
+    patch((d) => {
+      d.readings = [...d.readings, { id: uid(), groupId: gid,
+        author: (v.author || "").trim(), title: v.title.trim(), note: "", date: null, done: false }];
+      return d;
+    });
+    setNewBook((s) => ({ ...s, [gid]: { author: "", title: "" } }));
+  };
+
+  /* ---------- sections & groups ---------- */
+  const reorderLists = (fromId, toId) => patch((d) => {
+    const ls = [...d.lists];
+    const from = ls.findIndex((l) => l.id === fromId);
+    const to = ls.findIndex((l) => l.id === toId);
+    if (from < 0 || to < 0 || from === to) return d;
+    const [moved] = ls.splice(from, 1);
+    ls.splice(to, 0, moved);
+    d.lists = ls;
+    return d;
+  });
+
+  const mapList = (d, lid, fn) => { d.lists = d.lists.map((l) => (l.id === lid ? fn(l) : l)); return d; };
+
+  const renameSection = (lid, sid, name) => patch((d) => mapList(d, lid, (l) =>
+    ({ ...l, sections: l.sections.map((s) => (s.id === sid ? { ...s, name } : s)) })));
+  const addSection = (lid) => patch((d) => mapList(d, lid, (l) =>
+    ({ ...l, sections: [...l.sections, { id: uid(), name: "新二级板块", groups: [{ id: uid(), name: "新三级板块" }] }] })));
+  const deleteSection = (lid, sid) => {
+    const list = data.lists.find((l) => l.id === lid);
+    const sec = list.sections.find((s) => s.id === sid);
+    const gids = sec.groups.map((g) => g.id);
+    const n = data.readings.filter((x) => gids.includes(x.groupId)).length;
+    if (!window.confirm(`删除二级板块「${sec.name}」，含 ${sec.groups.length} 个三级板块、${n} 项书目？`)) return;
+    patch((d) => {
+      d.readings = d.readings.filter((x) => !gids.includes(x.groupId));
+      return mapList(d, lid, (l) => ({ ...l, sections: l.sections.filter((s) => s.id !== sid) }));
+    });
+  };
+  const moveSection = (lid, sid, dir) => patch((d) => mapList(d, lid, (l) => {
+    const ss = [...l.sections];
+    const i = ss.findIndex((s) => s.id === sid), j = i + dir;
+    if (i < 0 || j < 0 || j >= ss.length) return l;
+    const t = ss[i]; ss[i] = ss[j]; ss[j] = t;
+    return { ...l, sections: ss };
+  }));
+
+  const renameGroup = (lid, sid, gid, name) => patch((d) => mapList(d, lid, (l) =>
+    ({ ...l, sections: l.sections.map((s) => (s.id !== sid ? s
+      : { ...s, groups: s.groups.map((g) => (g.id === gid ? { ...g, name } : g)) })) })));
+  const addGroup = (lid, sid) => patch((d) => mapList(d, lid, (l) =>
+    ({ ...l, sections: l.sections.map((s) => (s.id !== sid ? s
+      : { ...s, groups: [...s.groups, { id: uid(), name: "新三级板块" }] })) })));
+  const deleteGroup = (lid, sid, gid) => {
+    const n = data.readings.filter((x) => x.groupId === gid).length;
+    const nm = gIndex[gid] ? gIndex[gid].group.name : "";
+    if (!window.confirm(n ? `删除三级板块「${nm}」及其 ${n} 项书目？` : `删除空板块「${nm}」？`)) return;
+    patch((d) => {
+      d.readings = d.readings.filter((x) => x.groupId !== gid);
+      return mapList(d, lid, (l) => ({ ...l, sections: l.sections.map((s) => (s.id !== sid ? s
+        : { ...s, groups: s.groups.filter((g) => g.id !== gid) })) }));
+    });
+  };
+  const moveGroup = (lid, sid, gid, dir) => patch((d) => mapList(d, lid, (l) =>
+    ({ ...l, sections: l.sections.map((s) => {
+      if (s.id !== sid) return s;
+      const gs = [...s.groups];
+      const i = gs.findIndex((g) => g.id === gid), j = i + dir;
+      if (i < 0 || j < 0 || j >= gs.length) return s;
+      const t = gs[i]; gs[i] = gs[j]; gs[j] = t;
+      return { ...s, groups: gs };
+    }) })));
+
+  const applyBulk = () => {
+    const secs = parseBulk(bulk);
+    if (!secs.length) { window.alert("没解析出任何书目。# 是二级板块，## 是三级板块，其余每行一本。"); return; }
+    const n = secs.reduce((a, s) => a + s.groups.reduce((b, g) => b + g.items.length, 0), 0);
+    if (replaceMode && !window.confirm(`将替换这个书单现有的全部板块与书目（含已排入日历的），改为 ${secs.length} 个二级板块 / ${n} 项。继续？`)) return;
+    patch((d) => {
+      const li = d.lists.findIndex((l) => l.id === organize);
+      if (li < 0) return d;
+      const list = { ...d.lists[li] };
+      const oldG = list.sections.flatMap((s) => s.groups.map((g) => g.id));
+      const fresh = secs.map((s) => ({ id: uid(), name: s.name,
+        groups: s.groups.map((g) => ({ id: uid(), name: g.name, _items: g.items })) }));
+      const strip = fresh.map((s) => ({ id: s.id, name: s.name,
+        groups: s.groups.map((g) => ({ id: g.id, name: g.name })) }));
+      if (replaceMode) {
+        d.readings = d.readings.filter((x) => !oldG.includes(x.groupId));
+        list.sections = strip;
+      } else {
+        list.sections = [...list.sections, ...strip];
+      }
+      const add = [];
+      fresh.forEach((s) => s.groups.forEach((g) => g._items.forEach((it) =>
+        add.push({ id: uid(), groupId: g.id, author: it.author, title: it.title, note: "", date: null, done: false }))));
+      d.readings = [...d.readings, ...add];
+      d.lists = [...d.lists]; d.lists[li] = list;
+      return d;
+    });
+    setBulk(""); setReplaceMode(false); setShowBulk(false);
+  };
+
+  const autoDistribute = () => patch((d) => {
+    const pool = d.readings.filter((x) => !x.date &&
+      (filter === "all" || (gIndex[x.groupId] && gIndex[x.groupId].list.id === filter)));
+    if (!pool.length) return d;
+    const slots = [];
+    const total = Math.max(0, daysBetween(todayKey, d.exam));
+    for (let i = 0; i <= total; i++) {
+      const k = toKey(addDays(new Date(), i));
+      if (d.meetings[k]) continue;
+      if ((d.teachDays || []).includes(dow(k))) continue;
+      slots.push(k);
+    }
+    if (!slots.length) return d;
+    const map = {};
+    pool.forEach((x, i) => { map[x.id] = slots[Math.floor((i * slots.length) / pool.length)]; });
+    d.readings = d.readings.map((x) => (map[x.id] ? { ...x, date: map[x.id] } : x));
+    return d;
+  });
+
+  const togglePerson = (k, p) => patch((d) => {
+    const m = { ...(d.meetings[k] || { people: [], note: "" }) };
+    m.people = m.people.includes(p) ? m.people.filter((y) => y !== p) : [...m.people, p];
+    const next = { ...d.meetings };
+    if (!m.people.length && !m.note) delete next[k]; else next[k] = m;
+    d.meetings = next; return d;
+  });
+  const setNote = (k, note) => patch((d) => {
+    const m = { ...(d.meetings[k] || { people: [], note: "" }), note };
+    const next = { ...d.meetings };
+    if (!m.people.length && !note) delete next[k]; else next[k] = m;
+    d.meetings = next; return d;
+  });
+
+  const resetAll = async () => {
+    if (!window.confirm("清空全部数据，恢复到最初的书单？排好的日期、会面、笔记都会消失，且无法撤销。建议先导出一份。")) return;
+    try { localStorage.removeItem(STORE_KEY); } catch (err) { /* 没有记录时忽略 */ }
+    setData(freshSeed());
+  };
+
+  const bindFile = async () => {
+    try {
+      let h;
+      const opts = {
+        suggestedName: "qe-plan.json",
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+      };
+      const mode = window.confirm(
+        "选“确定”：打开一个已有的同步文件（另一台电脑已经建好的）。\n选“取消”：新建一个同步文件。");
+      if (mode) {
+        const picked = await window.showOpenFilePicker({ types: opts.types, multiple: false });
+        h = picked[0];
+      } else {
+        h = await window.showSaveFilePicker(opts);
+      }
+      const p = await h.requestPermission({ mode: "readwrite" });
+      if (p !== "granted") { setSyncMsg("没有写入权限"); return; }
+      await idbPut("fileHandle", h);
+      setFh(h); setPerm("granted"); setSyncMsg("");
+      const remote = await readHandle(h).catch(() => null);
+      if (remote && remote.lists) {
+        const useRemote = window.confirm(
+          `这个文件里已有数据（${remote.updatedAt ? stamp(remote.updatedAt) : "时间未知"}）。\n` +
+          "选“确定”：用文件里的数据覆盖本机。\n选“取消”：用本机数据覆盖文件。");
+        if (useRemote) { stampRef.current = remote.updatedAt || 0; setData(remote); return; }
+      }
+      await writeHandle(h, { ...data, updatedAt: Date.now() });
+    } catch (err) { /* 用户取消选择 */ }
+  };
+
+  const reconnect = async () => {
+    if (!fh) return;
+    try {
+      const p = await fh.requestPermission({ mode: "readwrite" });
+      setPerm(p);
+      if (p === "granted") await pullFile();
+    } catch (err) { setSyncMsg("重新连接失败"); }
+  };
+
+  const pullFile = async () => {
+    if (!fh) return;
+    try {
+      const remote = await readHandle(fh);
+      if (!remote || !remote.lists) { setSyncMsg("文件里没有可用数据"); return; }
+      const t = remote.updatedAt || 0;
+      if (t <= stampRef.current &&
+          !window.confirm(`文件里的数据并不更新（${t ? stamp(t) : "时间未知"}），仍要载入吗？`)) return;
+      stampRef.current = t;
+      setData(remote);
+      setSyncMsg("");
+    } catch (err) { setSyncMsg("读取同步文件失败"); }
+  };
+
+  const unbindFile = async () => {
+    if (!window.confirm("断开同步文件？本机数据保留，文件也不会删除。")) return;
+    await idbDel("fileHandle").catch(() => {});
+    setFh(null); setPerm("prompt"); setSyncMsg("");
+  };
+
+  /* 切回这个窗口时，检查另一台电脑是否写过 */
+  useEffect(() => {
+    if (!fh || perm !== "granted") return;
+    const onFocus = async () => {
+      try {
+        const remote = await readHandle(fh);
+        if (remote && (remote.updatedAt || 0) > stampRef.current + 1500) {
+          if (window.confirm(`同步文件在别处更新过（${stamp(remote.updatedAt)}），载入吗？`)) {
+            stampRef.current = remote.updatedAt;
+            setData(remote);
+          } else {
+            stampRef.current = remote.updatedAt;   // 拒绝一次就不再反复问
+          }
+        }
+      } catch (err) { /* 忽略 */ }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [fh, perm]);
+
+  const exportJSON = () => {
+    const b = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b); a.download = "qe-plan.json"; a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const importJSON = (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => { try { setData(JSON.parse(fr.result)); } catch { window.alert("读不出来，需要是本工具导出的 JSON。"); } };
+    fr.readAsText(f); e.target.value = "";
+  };
+
+  const bandFor = (k) => {
+    const meet = data.meetings[k];
+    if (!meet || !meet.people.length) return null;
+    const order = [], bucket = {};
+    meet.people.forEach((p) => {
+      const lid = personList[p] || "_";
+      if (!bucket[lid]) { bucket[lid] = []; order.push(lid); }
+      bucket[lid].push(p);
+    });
+    return order.map((lid) => {
+      const l = data.lists.find((x) => x.id === lid);
+      return { color: l ? l.color : NEUTRAL, names: bucket[lid] };
+    });
+  };
+
+  if (!data) return <div style={{ padding: 30, fontFamily: "system-ui", color: "#767C72" }}>正在读取计划…</div>;
+
+  const matchStatus = (x) => {
+    if (statusFilter === "unplaced") return !x.date;
+    if (statusFilter === "placed") return !!x.date;
+    if (statusFilter === "unread") return !x.done;
+    if (statusFilter === "done") return x.done;
+    return true;
+  };
+  const visible = data.readings.filter(matchStatus);
+  const inGroup = (gid) => visible.filter((x) => x.groupId === gid);
+  const tree = data.lists
+    .filter((l) => filter === "all" || l.id === filter)
+    .map((l) => ({ list: l, sections: l.sections
+      .map((s) => ({ section: s, groups: s.groups
+        .map((g) => ({ group: g, items: inGroup(g.id) })).filter((x) => x.items.length) }))
+      .filter((x) => x.groups.length) }))
+    .filter((x) => x.sections.length);
+
+  const meetingKeys = Object.keys(data.meetings).sort();
+  const readingsBefore = (k) => {
+    const i = meetingKeys.indexOf(k);
+    const prev = i > 0 ? meetingKeys[i - 1] : data.start;
+    return data.readings.filter((x) => x.date && x.date > prev && x.date <= k).length;
+  };
+
+  const orgList = data.lists.find((l) => l.id === organize);
+  const editRec = editing ? data.readings.find((x) => x.id === editing) : null;
+  const pct = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
+
+  const groupOptions = data.lists.map((l) => (
+    <optgroup key={l.id} label={l.name}>
+      {l.sections.flatMap((s) => s.groups.map((g) =>
+        <option key={g.id} value={g.id}>{s.name} · {g.name}</option>))}
+    </optgroup>
+  ));
+
+  return (
+    <div className="qe">
+      <style>{CSS}</style>
+
+      {/* progress */}
+      <div className="qe-prog">
+        <div className="qe-track2">
+          {stats.perList.map((p, i) => p.done > 0 && (
+            <div key={i} className="qe-seg"
+              style={{ width: `${(p.done / stats.total) * 100}%`, background: p.color }} />
+          ))}
+        </div>
+        <span className="qe-pnum">已读 <b>{stats.done}</b> / {stats.total} · <b>{pct}%</b></span>
+        {FS_OK && (
+          <span className="qe-sync">
+            {!fh && <button className="qe-btn" onClick={bindFile}>连接同步文件</button>}
+            {fh && perm !== "granted" && (
+              <button className="qe-btn warn" onClick={reconnect}>同步文件待授权 · 点此连接</button>
+            )}
+            {fh && perm === "granted" && (
+              <>
+                <span className="qe-syncdot" />
+                <span className="qe-syncname" title={fh.name}>{fh.name}</span>
+                <button className="qe-btn sm" onClick={pullFile} title="从文件载入另一台电脑的改动">载入</button>
+                <button className="qe-btn sm" onClick={unbindFile} title="断开">断开</button>
+              </>
+            )}
+            {syncMsg && <span className="qe-syncerr">{syncMsg}</span>}
+          </span>
+        )}
+      </div>
+
+      <div className="qe-top">
+        <div className="qe-rate">
+          <b>{stats.rate ? stats.rate.toFixed(1) : "0"}</b>
+          <span>每个可用日需读完的书目数</span>
+        </div>
+        <div className="qe-stat"><i>未排</i><b>{stats.un}</b></div>
+        <div className="qe-stat"><i>已排</i><b>{stats.total - stats.un}</b></div>
+        <div className="qe-stat"><i>可用日</i><b>{stats.free}</b></div>
+        <div className="qe-stat"><i>距考试</i><b>{stats.daysLeft}</b></div>
+        <div className="qe-dates">
+          <label className="qe-field"><i>起始</i>
+            <input type="date" value={data.start}
+              onChange={(e) => patch((d) => { d.start = e.target.value; return d; })} /></label>
+          <label className="qe-field"><i>考试</i>
+            <input type="date" value={data.exam}
+              onChange={(e) => patch((d) => { d.exam = e.target.value; return d; })} /></label>
+        </div>
+      </div>
+
+      <div className="qe-body">
+        {/* pool */}
+        <div className="qe-pool" style={{ width: (data.poolWidth || 356) + "px" }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); if (id) unassign(id); }}>
+
+          <div className="qe-poolhead">
+            <h2>书目总目</h2>
+            <em>{visible.length} / {stats.total}　已排 {stats.total - stats.un}　已读 {stats.done}</em>
+          </div>
+
+          <div className="qe-tools">
+            <select className="qe-btn" value={filter} onChange={(e) => setFilter(e.target.value)}>
+              <option value="all">四个书单</option>
+              {data.lists.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+            <button className="qe-btn" onClick={autoDistribute}>自动排布</button>
+            <select className="qe-btn" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">全部状态</option>
+              <option value="unplaced">未排日期</option>
+              <option value="placed">已排日期</option>
+              <option value="unread">未读完</option>
+              <option value="done">已读完</option>
+            </select>
+            <button className="qe-btn" onClick={() => {
+              const allOpen = data.lists.every((l) => !fold[l.id]);
+              const next = {};
+              if (allOpen) data.lists.forEach((l) => { next[l.id] = true; });
+              setFold(next);
+            }}>折叠</button>
+            <button className="qe-btn" onClick={() => setOrganize(data.lists[0] && data.lists[0].id)}>编辑书单</button>
+          </div>
+
+          <div className="qe-poollist">
+            {!tree.length && <p className="qe-empty">这里空了。书目都已排入日历，或被筛选隐藏。</p>}
+            {tree.map(({ list, sections }) => {
+              const n = sections.reduce((a, s) => a + s.groups.reduce((b, g) => b + g.items.length, 0), 0);
+              return (
+                <div key={list.id}>
+                  <button
+                    className={"qe-lhead" + (filter === "all" ? " grab" : "")
+                      + (dragList === list.id ? " dragging" : "")
+                      + (dropList === list.id ? " dropinto" : "")}
+                    draggable={filter === "all"}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("application/x-qe-list", list.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragList(list.id);
+                    }}
+                    onDragEnd={() => { setDragList(null); setDropList(null); }}
+                    onDragOver={(e) => {
+                      if (dragList && dragList !== list.id) {
+                        e.preventDefault(); e.stopPropagation(); setDropList(list.id);
+                      }
+                    }}
+                    onDragLeave={() => setDropList((x) => (x === list.id ? null : x))}
+                    onDrop={(e) => {
+                      const from = e.dataTransfer.getData("application/x-qe-list");
+                      if (from) { e.preventDefault(); e.stopPropagation(); reorderLists(from, list.id); }
+                      setDragList(null); setDropList(null);
+                    }}
+                    onClick={() => setFold((f) => ({ ...f, [list.id]: !f[list.id] }))}>
+                    <span className="qe-swatch" style={{ background: list.color }} />
+                    <span className="qe-lname"><b>{list.name}</b><i>{list.examiner}</i></span>
+                    {filter === "all" && <span className="qe-grip" title="拖动可调整书单顺序">⣿</span>}
+                    <span className="qe-count">{fold[list.id] ? "+" : "–"} {n}</span>
+                  </button>
+                  {!fold[list.id] && sections.map(({ section, groups }) => {
+                    const sn = groups.reduce((a, g) => a + g.items.length, 0);
+                    return (
+                      <div key={section.id}>
+                        <button className="qe-shead" onClick={() => setFold((f) => ({ ...f, [section.id]: !f[section.id] }))}>
+                          <span className="qe-caret">{fold[section.id] ? "▶" : "▼"}</span>
+                          <span className="qe-label">{section.name}</span>
+                          <span className="qe-count">{sn}</span>
+                        </button>
+                        {!fold[section.id] && groups.map(({ group, items }) => (
+                          <div key={group.id}>
+                            <button className="qe-ghead" onClick={() => setFold((f) => ({ ...f, [group.id]: !f[group.id] }))}>
+                              <span className="qe-caret">{fold[group.id] ? "▶" : "▼"}</span>
+                              <span className="qe-label">{group.name}</span>
+                              <span className="qe-count">{items.length}</span>
+                            </button>
+                            {!fold[group.id] && items.map((x) => (
+                              <div key={x.id}
+                                className={"qe-item" + (held === x.id ? " held" : "")
+                                  + (x.date ? " placed" : "") + (x.done ? " done" : "")}
+                                draggable
+                                onDragStart={(e) => e.dataTransfer.setData("text/plain", x.id)}
+                                onClick={() => setHeld((h) => (h === x.id ? null : x.id))}
+                                title={x.date ? "已排在 " + x.date + "，拖动可改期" : "拖到日期上，或点选后再点日期"}>
+                                <span className="qe-meta">
+                                  {x.author && <span className="qe-auth">{x.author}</span>}
+                                  <span className="qe-title">
+                                    {x.title}{x.note && <span className="qe-hasnote" title={x.note}> ✱</span>}
+                                  </span>
+                                </span>
+                                {x.date && (
+                                  <button className="qe-datechip" title="点击撤回日期"
+                                    onClick={(e) => { e.stopPropagation(); unassign(x.id); }}>
+                                    {fromKey(x.date).getMonth() + 1}/{fromKey(x.date).getDate()}
+                                  </button>
+                                )}
+                                <button className="qe-edit" title={x.done ? "标记为未读" : "标记为读完"}
+                                  onClick={(e) => { e.stopPropagation(); toggleDone(x.id); }}>
+                                  {x.done ? "✓" : "○"}
+                                </button>
+                                <button className="qe-edit" title="编辑这一条"
+                                  onClick={(e) => { e.stopPropagation(); setEditing(x.id); }}>✎</button>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="qe-add">
+            <button className="qe-addtoggle" onClick={() => setShowAdd((v) => !v)}>
+              <span className="qe-caret">{showAdd ? "\u25bc" : "\u25b6"}</span>
+              <span style={{ flex: 1 }}>添加书目 · 导入导出</span>
+            </button>
+            {showAdd && <div className="qe-addbody">
+            <input placeholder="书名 / 篇名" value={draft.title}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && addReading()} />
+            <input placeholder="作者" value={draft.author}
+              onChange={(e) => setDraft({ ...draft, author: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && addReading()} />
+            <div className="qe-addrow">
+              <select value={draft.groupId} onChange={(e) => setDraft({ ...draft, groupId: e.target.value })}>
+                {groupOptions}
+              </select>
+              <button className="qe-btn" onClick={addReading}>加入</button>
+            </div>
+            <div className="qe-addrow" style={{ marginTop: 2 }}>
+              <button className="qe-btn" onClick={exportJSON}>导出</button>
+              <button className="qe-btn" onClick={() => fileRef.current && fileRef.current.click()}>导入</button>
+              <button className="qe-btn" onClick={() => {
+                if (window.confirm("把所有已排书目退回左栏？会面日不受影响。"))
+                  patch((d) => { d.readings = d.readings.map((x) => ({ ...x, date: null })); return d; });
+              }}>全部退回</button>
+              <button className="qe-btn" onClick={resetAll}>清空重来</button>
+              <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={importJSON} />
+            </div>
+            {saveErr && <p style={{ margin: 0, color: "#C0392B", fontSize: 11 }}>保存失败，改动只在当前页面。先导出一份。</p>}
+            </div>}
+          </div>
+        </div>
+
+        <div className={"qe-split" + (resizing ? " on" : "")}
+          onMouseDown={startResize} title="拖动调整左右宽度" />
+
+        {/* calendar */}
+        <div className="qe-cal">
+          <div className="qe-wdays">
+            {WD.map((d, i) => (
+              <div key={d} className={(data.teachDays || []).includes((i + 1) % 7) ? "tg" : ""}>周{d}</div>
+            ))}
+            <div style={{ borderRight: "none" }}>负荷</div>
+          </div>
+
+          {weeks.map((week, wi) => {
+            const count = week.reduce((s, k) => s + (byDate[k] ? byDate[k].length : 0), 0);
+            const firstOfMonth = week.find((k) => fromKey(k).getDate() === 1);
+            const mD = fromKey(firstOfMonth || week[0]);
+            return (
+              <React.Fragment key={week[0]}>
+                {(wi === 0 || firstOfMonth) &&
+                  <div className="qe-month">{mD.getFullYear()} 年 {MONTHS[mD.getMonth()]}</div>}
+                <div className="qe-week">
+                  {week.map((k) => {
+                    const items = byDate[k] || [];
+                    const band = bandFor(k);
+                    const out = k < data.start || k > data.exam;
+                    const teach = (data.teachDays || []).includes(dow(k));
+                    const cls = ["qe-day"];
+                    if (out) cls.push("out");
+                    else if (band) cls.push("meet");
+                    else if (teach) cls.push("teach");
+                    if (k === todayKey) cls.push("today");
+                    if (dragOver === k) cls.push("over");
+                    let bg = null;
+                    if (band && !out) {
+                      const w = 100 / band.length;
+                      bg = band.length === 1 ? band[0].color
+                        : `linear-gradient(90deg,${band.map((s2, i) =>
+                            `${s2.color} ${i * w}% ${(i + 1) * w}%`).join(",")})`;
+                    }
+                    return (
+                      <div key={k} className={cls.join(" ")}
+                        style={bg ? { background: bg } : null}
+                        onDragOver={(e) => { e.preventDefault(); setDragOver(k); }}
+                        onDragLeave={() => setDragOver((x) => (x === k ? null : x))}
+                        onDrop={(e) => { e.preventDefault(); setDragOver(null);
+                          const id = e.dataTransfer.getData("text/plain"); if (id) assign(id, k); }}
+                        onClick={() => { if (held) assign(held, k); else setOpenDay(k); }}>
+                        <div className="qe-dnum">
+                          <span className="qe-num">{fromKey(k).getDate()}</span>
+                          {teach && !out && !band && <span className="qe-teachtag">教学</span>}
+                          {items.length > 2 && <span className="qe-more">{items.length}</span>}
+                        </div>
+                        {band && !out && (
+                          <div className="qe-names">
+                            {band.map((seg, i) => (
+                              <div key={i} className="qe-nameseg" title={seg.names.join("、")}>
+                                {seg.names.map(surname).join("、")}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {items.slice(0, 3).map((x) => {
+                          const gi = gIndex[x.groupId];
+                          const c = gi ? gi.list.color : "#888";
+                          return (
+                            <div key={x.id} className={"qe-chip" + (x.done ? " done" : "")}
+                              draggable
+                              onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("text/plain", x.id); }}
+                              onClick={(e) => { e.stopPropagation(); toggleDone(x.id); }}
+                              style={{ background: tint(c, 0.15), borderLeftColor: c }}
+                              title={`${x.title}${x.author ? " — " + x.author : ""}｜${gi ? gi.section.name + " · " + gi.group.name : ""}${x.note ? "｜" + x.note : ""}｜点击标记读完`}>
+                              {x.title}
+                            </div>
+                          );
+                        })}
+                        {items.length > 3 && <span className="qe-more">还有 {items.length - 3} 项</span>}
+                      </div>
+                    );
+                  })}
+                  <div className="qe-load">
+                    <span className="qe-loadn">{count} <em>项</em></span>
+                    <div className="qe-track">
+                      <div className={"qe-fill" + (count > peak * 0.75 ? " hot" : "")}
+                        style={{ width: `${Math.min(100, (count / peak) * 100)}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+
+      {held && (
+        <div className="qe-held">
+          <span>已选中「{(data.readings.find((x) => x.id === held) || {}).title}」，点一个日期放入</span>
+          <button onClick={() => setHeld(null)}>取消</button>
+        </div>
+      )}
+
+      {/* day panel */}
+      {openDay && (
+        <div className="qe-scrim" onClick={() => setOpenDay(null)}>
+          <div className="qe-modal narrow" onClick={(e) => e.stopPropagation()}>
+            <div className="qe-mh">
+              <div>
+                <h3>{fromKey(openDay).getFullYear()} 年 {MONTHS[fromKey(openDay).getMonth()]}{fromKey(openDay).getDate()} 日</h3>
+                <p>周{WD[(dow(openDay) + 6) % 7]}
+                  {(data.teachDays || []).includes(dow(openDay)) && "　·　教学日"}
+                  {data.meetings[openDay] && `　·　会面前累计 ${readingsBefore(openDay)} 项`}</p>
+              </div>
+              <button className="qe-x" onClick={() => setOpenDay(null)}>✕</button>
+            </div>
+            <div className="qe-mb">
+              <div className="qe-sect">
+                <h4>与谁会面</h4>
+                <div className="qe-people">
+                  {data.people.map((p) => {
+                    const l = data.lists.find((x) => x.id === p.listId);
+                    const on = data.meetings[openDay] && data.meetings[openDay].people.includes(p.name);
+                    return (
+                      <button key={p.name} className="qe-pbtn"
+                        style={on ? { background: l ? l.color : NEUTRAL, color: "#fff",
+                                      borderColor: l ? l.color : NEUTRAL } : null}
+                        onClick={() => togglePerson(openDay, p.name)}>
+                        {!on && <span className="qe-pdot" style={{ background: l ? l.color : NEUTRAL }} />}
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="qe-sect">
+                <h4>备注</h4>
+                <textarea className="qe-note" placeholder="这次会面要带什么、要问什么"
+                  value={(data.meetings[openDay] || {}).note || ""} onChange={(e) => setNote(openDay, e.target.value)} />
+              </div>
+              <div className="qe-sect">
+                <h4>这天的书目（{(byDate[openDay] || []).length}）</h4>
+                {!(byDate[openDay] || []).length && <p className="qe-hint">还没有安排。从左栏拖一本过来。</p>}
+                {(byDate[openDay] || []).map((x) => {
+                  const gi = gIndex[x.groupId];
+                  return (
+                    <div className="qe-prow" key={x.id}>
+                      <input type="checkbox" checked={x.done} onChange={() => toggleDone(x.id)} />
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span className="qe-title" style={{ textDecoration: x.done ? "line-through" : "none", opacity: x.done ? 0.5 : 1 }}>{x.title}</span>
+                        <span className="qe-auth">
+                          {x.author && x.author + "　"}
+                          {gi && `${gi.list.name} · ${gi.group.name}`}
+                        </span>
+                        {x.note && <span className="qe-notetext">{x.note}</span>}
+                      </span>
+                      <button className="qe-x" title="编辑" onClick={() => setEditing(x.id)}>✎</button>
+                      <button className="qe-x" title="退回左栏" onClick={() => unassign(x.id)}>↩</button>
+                      <button className="qe-x" title="删除" onClick={() => removeReading(x.id)}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* list editor */}
+      {orgList && (
+        <div className="qe-scrim" onClick={() => setOrganize(null)}>
+          <div className="qe-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="qe-mh">
+              <div><h3>编辑书单</h3><p>板块名直接改；书目点 ✎ 改标题、作者与归属</p></div>
+              <button className="qe-x" onClick={() => setOrganize(null)}>✕</button>
+            </div>
+            <div className="qe-mb">
+              <div className="qe-people">
+                {data.lists.map((l) => (
+                  <button key={l.id} className={"qe-btn" + (l.id === organize ? " on" : "")}
+                    onClick={() => setOrganize(l.id)}>{l.name}</button>
+                ))}
+              </div>
+
+              <div className="qe-sect">
+                <h4>书单名与考官</h4>
+                <input className="qe-in" value={orgList.name} style={{ marginBottom: 6 }}
+                  onChange={(e) => patch((d) => mapList(d, organize, (l) => ({ ...l, name: e.target.value })))} />
+                <input className="qe-in" value={orgList.examiner || ""} placeholder="考官"
+                  onChange={(e) => patch((d) => mapList(d, organize, (l) => ({ ...l, examiner: e.target.value })))} />
+                <div className="qe-dots" style={{ marginTop: 9 }}>
+                  {PALETTE.map((c) => (
+                    <button key={c} className={"qe-dot" + (orgList.color === c ? " on" : "")}
+                      style={{ background: c }} title={c}
+                      onClick={() => patch((d) => mapList(d, organize, (l) => ({ ...l, color: c })))} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="qe-sect">
+                <h4>板块与书目</h4>
+                {orgList.sections.map((s, si) => (
+                  <div className="qe-sec" key={s.id}>
+                    <div className="qe-sech">
+                      <input value={s.name} onChange={(e) => renameSection(orgList.id, s.id, e.target.value)} />
+                      <button className="qe-x" style={{ opacity: si === 0 ? 0.25 : 1 }}
+                        title="上移" onClick={() => moveSection(orgList.id, s.id, -1)}>↑</button>
+                      <button className="qe-x" style={{ opacity: si === orgList.sections.length - 1 ? 0.25 : 1 }}
+                        title="下移" onClick={() => moveSection(orgList.id, s.id, 1)}>↓</button>
+                      <button className="qe-x" title="删除二级板块" onClick={() => deleteSection(orgList.id, s.id)}>✕</button>
+                    </div>
+                    {s.groups.map((g, gi2) => {
+                      const books = data.readings.filter((x) => x.groupId === g.id);
+                      const nb = newBook[g.id] || { author: "", title: "" };
+                      return (
+                        <div className="qe-grp" key={g.id}>
+                          <div className="qe-grph">
+                            <input value={g.name} onChange={(e) => renameGroup(orgList.id, s.id, g.id, e.target.value)} />
+                            <span className="qe-count">{books.length}</span>
+                            <button className="qe-x" style={{ opacity: gi2 === 0 ? 0.25 : 1 }}
+                              title="上移" onClick={() => moveGroup(orgList.id, s.id, g.id, -1)}>↑</button>
+                            <button className="qe-x" style={{ opacity: gi2 === s.groups.length - 1 ? 0.25 : 1 }}
+                              title="下移" onClick={() => moveGroup(orgList.id, s.id, g.id, 1)}>↓</button>
+                            <button className="qe-x" title="删除三级板块" onClick={() => deleteGroup(orgList.id, s.id, g.id)}>✕</button>
+                          </div>
+                          {books.map((x) => (
+                            <div className="qe-book" key={x.id}>
+                              <span className="t">{x.title}{x.note && <span className="qe-hasnote"> ✱</span>}</span>
+                              <span className="a">{x.author}</span>
+                              {x.date && <span className="qe-count" title="已排入日历">◆</span>}
+                              <button className="qe-x" title="编辑" onClick={() => setEditing(x.id)}>✎</button>
+                              <button className="qe-x" title="删除"
+                                onClick={() => { if (window.confirm(`删除「${x.title}」？`)) removeReading(x.id); }}>✕</button>
+                            </div>
+                          ))}
+                          <div className="qe-newbook">
+                            <input style={{ flex: 2 }} placeholder="书名" value={nb.title}
+                              onChange={(e) => setNewBook((v) => ({ ...v, [g.id]: { ...nb, title: e.target.value } }))}
+                              onKeyDown={(e) => e.key === "Enter" && addBookToGroup(g.id)} />
+                            <input style={{ flex: 1 }} placeholder="作者" value={nb.author}
+                              onChange={(e) => setNewBook((v) => ({ ...v, [g.id]: { ...nb, author: e.target.value } }))}
+                              onKeyDown={(e) => e.key === "Enter" && addBookToGroup(g.id)} />
+                            <button className="qe-btn sm" onClick={() => addBookToGroup(g.id)}>加</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="qe-grp" style={{ padding: "5px 8px 6px 16px" }}>
+                      <button className="qe-btn sm" onClick={() => addGroup(orgList.id, s.id)}>＋ 三级板块</button>
+                    </div>
+                  </div>
+                ))}
+                <div className="qe-addrow" style={{ marginTop: 4 }}>
+                  <button className="qe-btn" onClick={() => addSection(orgList.id)}>＋ 二级板块</button>
+                  <button className="qe-btn" onClick={() => setShowBulk(true)}>批量粘贴</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* single reading editor */}
+      {editRec && (
+        <div className="qe-scrim top" onClick={() => setEditing(null)}>
+          <div className="qe-modal narrow" onClick={(e) => e.stopPropagation()}>
+            <div className="qe-mh">
+              <h3>编辑书目</h3>
+              <button className="qe-x" onClick={() => setEditing(null)}>✕</button>
+            </div>
+            <div className="qe-mb">
+              <div className="qe-sect">
+                <h4>书名 / 篇名</h4>
+                <input className="qe-in" autoFocus value={editRec.title}
+                  onChange={(e) => updateReading(editRec.id, { title: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && setEditing(null)} />
+              </div>
+              <div className="qe-sect">
+                <h4>作者</h4>
+                <input className="qe-in" value={editRec.author || ""}
+                  onChange={(e) => updateReading(editRec.id, { author: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && setEditing(null)} />
+              </div>
+              <div className="qe-sect">
+                <h4>归属板块</h4>
+                <select className="qe-in" value={editRec.groupId}
+                  onChange={(e) => updateReading(editRec.id, { groupId: e.target.value })}>
+                  {groupOptions}
+                </select>
+              </div>
+              <div className="qe-sect">
+                <h4>笔记</h4>
+                <textarea className="qe-note" value={editRec.note || ""}
+                  placeholder="版本、指定章节、为什么读它"
+                  onChange={(e) => updateReading(editRec.id, { note: e.target.value })} />
+              </div>
+              <div className="qe-addrow" style={{ justifyContent: "space-between" }}>
+                <button className="qe-btn" onClick={() => {
+                  if (window.confirm(`删除「${editRec.title}」？`)) { removeReading(editRec.id); setEditing(null); }
+                }}>删除这一条</button>
+                {editRec.date && <button className="qe-btn" onClick={() => unassign(editRec.id)}>退回左栏</button>}
+                <button className="qe-btn on" onClick={() => setEditing(null)}>完成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* bulk paste */}
+      {showBulk && orgList && (
+        <div className="qe-scrim top" onClick={() => setShowBulk(false)}>
+          <div className="qe-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="qe-mh">
+              <div><h3>批量粘贴</h3><p>写入「{orgList.name}」</p></div>
+              <button className="qe-x" onClick={() => setShowBulk(false)}>✕</button>
+            </div>
+            <div className="qe-mb">
+              <p className="qe-hint">
+                <code># 二级板块</code>，<code>## 三级板块</code>，其余每行一本。
+                作者与书名用逗号或破折号分开；行尾年份、序号、<code>#</code> 注释会被丢掉。
+              </p>
+              <textarea className="qe-ta" value={bulk} onChange={(e) => setBulk(e.target.value)} autoFocus
+                placeholder={"# Systems Fever\n## Futures\n托夫勒,《第三次浪潮》(1984)\nJulian Gewirtz, \"The Futurists of Beijing\" (2019)\n\n## Scientific Methodology\n钱学森等,《论系统工程》(1988)"} />
+              <div className="qe-addrow" style={{ alignItems: "center" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+                  <input type="checkbox" checked={replaceMode} onChange={(e) => setReplaceMode(e.target.checked)} />
+                  <span style={{ fontSize: 12 }}>替换这个书单现有内容</span>
+                </label>
+                <button className="qe-btn on" onClick={applyBulk}>写入</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById("root")).render(<QEPlanner />);
+</script>
+</body>
+</html>
