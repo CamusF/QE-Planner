@@ -35,10 +35,13 @@ const MONTHS = ["一月","二月","三月","四月","五月","六月","七月","
 const WD = ["一","二","三","四","五","六","日"];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+/* 把书单色按比例与白色混合，输出不透明色。
+   必须不透明：会面日格子是饱和底色，半透明书目块在上面会糊成一片。*/
 const tint = (hex, a) => {
   const h = hex.replace("#", "");
   const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  const mix = (c) => Math.round(255 + (c - 255) * a);
+  return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
 };
 const surname = (p) => {
   const t = p.trim().split(/\s+/);
@@ -46,6 +49,10 @@ const surname = (p) => {
 };
 
 const NEUTRAL = "#6E746B";
+
+/* 日历每格最多列出几本书；超出的折成「还有 n 项」。
+   格子高度随内容自动增长，所以调大这个数即可。*/
+const MAX_CHIPS = 10;
 
 const PALETTE = ["#C2255C", "#1C7ED6", "#E8590C", "#0CA678",
                  "#7048E8", "#F59F00", "#37B24D", "#0C8599"];
@@ -567,23 +574,24 @@ const CSS = `
 .qe-week{display:grid;grid-template-columns:repeat(7,1fr) 66px;border-bottom:1px solid var(--rule)}
 .qe-day{border-right:1px solid var(--hair);min-height:var(--day-h);padding:6px 6px 8px;
   display:flex;flex-direction:column;gap:var(--day-gap);background:var(--white);
-  cursor:pointer;transition:box-shadow .1s;overflow:hidden}
+  cursor:pointer;transition:box-shadow .1s}
 .qe-day.teach{background:var(--teach)}
 .qe-day.out{background:var(--out);color:var(--dim)}
 .qe-day.over{box-shadow:inset 0 0 0 2px var(--signal)}
 .qe-day.today .qe-num{background:var(--ink);color:var(--white);border-radius:3px;padding:0 4px}
-.qe-day.meet{color:#fff}
 .qe-day.meet .qe-num{color:rgba(255,255,255,.88)}
 .qe-names{display:flex;flex:none;gap:0}
 .qe-nameseg{flex:1;min-width:0;color:#fff;font-size:var(--fs-meet);font-weight:600;
   line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.qe-day.meet .qe-chip{background:rgba(255,255,255,.94)!important;
-  border-left-color:rgba(255,255,255,.55)}
+/* 会面日只有日期数字和老师名转白；书目块保持与普通日一致，
+   另加一圈白描边，使它在饱和底色上仍然是独立的一块 */
+.qe-day.meet .qe-chip{box-shadow:0 0 0 1px rgba(255,255,255,.65)}
+.qe-day.meet .qe-more{color:rgba(255,255,255,.9)}
 .qe-dnum{display:flex;align-items:center;justify-content:space-between;gap:4px;
   margin-bottom:1px}
 .qe-num{font-family:var(--f-num);font-size:var(--fs-daynum);color:var(--dim)}
 .qe-teachtag{font-size:10px;color:var(--dim)}
-.qe-chip{border-left:3px solid;border-radius:3px;padding:var(--chip-pad);
+.qe-chip{border-left:3px solid;border-radius:3px;padding:var(--chip-pad);color:var(--ink);flex:none;
   line-height:var(--chip-lh);cursor:grab;overflow:hidden;font-family:var(--f-title);
   font-size:var(--fs-chip);white-space:normal;word-break:break-word;
   display:-webkit-box;-webkit-box-orient:vertical;
@@ -1451,7 +1459,7 @@ function QEPlanner() {
                             ))}
                           </div>
                         )}
-                        {items.slice(0, 3).map((x) => {
+                        {items.slice(0, MAX_CHIPS).map((x) => {
                           const gi = gIndex[x.groupId];
                           const c = gi ? gi.list.color : "#888";
                           return (
@@ -1465,7 +1473,7 @@ function QEPlanner() {
                             </div>
                           );
                         })}
-                        {items.length > 3 && <span className="qe-more">还有 {items.length - 3} 项</span>}
+                        {items.length > MAX_CHIPS && <span className="qe-more">还有 {items.length - MAX_CHIPS} 项</span>}
                       </div>
                     );
                   })}
